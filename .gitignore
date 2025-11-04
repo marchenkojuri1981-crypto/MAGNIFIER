@@ -1,0 +1,48 @@
+# Build folders
+/build/
+/build_win/
+
+# Visual Studio / MSBuild
+*.vcxproj.user
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# CMake intermediates
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.cmake
+*.a
+*.lib
+*.exp
+*.ilk
+*.pdb
+
+# Binaries
+/RUN/*.exe
+/RUN/*.dll
+*.exe
+*.dll
+*.obj
+*.o
+
+# Logs / temp
+*.log
+*.tmp
+*.cache
+*.pch
+*.tlog
+*.lastbuildstate
+
+# DirectX shader cache
+*.cso
+*.pso
+
+# VS Code
+.vscode/
+
+# System files
+Thumbs.db
+Desktop.ini
