@@ -85,6 +85,9 @@ private:
     bool WindowMatchesPatterns(HWND hwnd, const std::initializer_list<const wchar_t*>& patterns) const;
     std::optional<RECT> GetForegroundWindowRectIfMatches(const std::initializer_list<const wchar_t*>& patterns) const;
     bool IsPuttyProcess() const;
+    void HandleDisplayConfigurationChange(const wchar_t* reason, bool force_restart);
+    void OnSystemSuspend();
+    void OnSystemResume();
 
     void RegisterMessageWindow();
     static LRESULT CALLBACK MessageWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
@@ -168,6 +171,7 @@ private:
     ULONGLONG end_ignore_inputs_until_{0};
     bool has_putty_anchor_{false};
     FloatPoint putty_anchor_source_{};
+    bool resume_should_start_magnifier_{false};
 
     const MonitorInfo& SourceMonitor() const;
     const MonitorInfo& MagnifierMonitor() const;

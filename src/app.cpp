@@ -21,6 +21,7 @@
 #include <vector>
 #include <shellapi.h>
 #include <windowsx.h>
+#include <dbt.h>
 
 namespace {
 constexpr wchar_t kMessageWindowClass[] = L"ElectronicMagnifierMessageWindow";
@@ -435,7 +436,8 @@ bool App::SelectMonitors() {
     monitors_->Refresh();
     const auto& list = monitors_->Monitors();
     if (list.size() < 2) {
-        Logger::Error(L"At least two monitors are required");
+        Logger::Error(L"At least two monitors (including DISPLAY2) are required");
+        ShowStatusMessage(L"Подключите второй монитор", kStatusBadgeDurationMs);
         return false;
     }
 
@@ -451,32 +453,69 @@ bool App::SelectMonitors() {
         return -1;
     };
 
+    const std::wstring display_prefix = L"\\\\.\\DISPLAY";
+    auto display_number = [&](const std::wstring& name) -> int {
+        if (name.rfind(display_prefix, 0) != 0) {
+            return -1;
+        }
+        const wchar_t* digits = name.c_str() + display_prefix.size();
+        if (!*digits || !iswdigit(*digits)) {
+            return -1;
+        }
+        wchar_t* end = nullptr;
+        long value = wcstol(digits, &end, 10);
+        if (end == digits || value <= 0) {
+            return -1;
+        }
+        return static_cast<int>(value);
+    };
+
+    auto find_by_number = [&](int number) -> int {
+        for (size_t i = 0; i < list.size(); ++i) {
+            if (display_number(list[i].device_name) == number) {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
+    };
+
+    int magnifier = find_by_number(2);
+    if (magnifier < 0) {
+        Logger::Error(L"Monitor #2 (\\\\.\\DISPLAY2) is not available");
+        ShowStatusMessage(L"Монитор №2 недоступен", kStatusBadgeDurationMs);
+        return false;
+    }
+
     int source = find_by_name(config_->Data().source_monitor);
-    int magnifier = find_by_name(config_->Data().magnifier_monitor);
+    if (source == magnifier) {
+        source = -1;
+    }
 
     if (source < 0) {
         for (size_t i = 0; i < list.size(); ++i) {
+            if (static_cast<int>(i) == magnifier) {
+                continue;
+            }
             if (list[i].primary) {
                 source = static_cast<int>(i);
                 break;
             }
         }
-        if (source < 0) {
-            source = 0;
-        }
     }
 
-    if (magnifier < 0 || magnifier == source) {
+    if (source < 0) {
         for (size_t i = 0; i < list.size(); ++i) {
-            if (static_cast<int>(i) != source) {
-                magnifier = static_cast<int>(i);
+            if (static_cast<int>(i) != magnifier) {
+                source = static_cast<int>(i);
                 break;
             }
         }
     }
 
-    if (magnifier < 0) {
-        magnifier = source == 0 ? 1 : 0;
+    if (source < 0) {
+        Logger::Error(L"Unable to select a capture monitor different from DISPLAY2");
+        ShowStatusMessage(L"Нет монитора для захвата", kStatusBadgeDurationMs);
+        return false;
     }
 
     source_index_ = source;
@@ -1036,6 +1075,24 @@ LRESULT CALLBACK App::MessageWndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM 
         return 0;
     case WM_TRAYICON:
         self->HandleTrayMessage(wparam, lparam);
+        return 0;
+    case WM_POWERBROADCAST:
+        if (wparam == PBT_APMSUSPEND) {
+            self->OnSystemSuspend();
+            return TRUE;
+        }
+        if (wparam == PBT_APMRESUMEAUTOMATIC || wparam == PBT_APMRESUMESUSPEND) {
+            self->OnSystemResume();
+            return TRUE;
+        }
+        break;
+    case WM_DISPLAYCHANGE:
+        self->HandleDisplayConfigurationChange(L"WM_DISPLAYCHANGE", false);
+        return 0;
+    case WM_DEVICECHANGE:
+        if (wparam == DBT_DEVNODES_CHANGED) {
+            self->HandleDisplayConfigurationChange(L"WM_DEVICECHANGE", false);
+        }
         return 0;
     case WM_DESTROY:
         PostQuitMessage(0);
@@ -1692,5 +1749,62 @@ const MonitorInfo& App::SourceMonitor() const {
 
 const MonitorInfo& App::MagnifierMonitor() const {
     return monitors_->Monitors().at(static_cast<size_t>(magnifier_index_));
+}
+
+void App::HandleDisplayConfigurationChange(const wchar_t* reason, bool force_restart) {
+    if (!ready_) {
+        return;
+    }
+
+    std::wstring message = L"Display configuration change detected";
+    if (reason && *reason) {
+        message.append(L" (");
+        message.append(reason);
+        message.push_back(L')');
+    }
+    Logger::Info(message);
+
+    bool restart = force_restart || magnifier_active_;
+    if (magnifier_active_) {
+        StopMagnifier();
+    }
+
+    if (!SelectMonitors()) {
+        Logger::Error(L"Unable to refresh monitor selection after configuration change");
+        return;
+    }
+
+    bool configured = false;
+    if (restart) {
+        configured = StartMagnifier();
+    } else {
+        configured = ConfigureForCurrentMonitors();
+        if (configured) {
+            UpdateTray();
+        }
+    }
+
+    if (!configured) {
+        Logger::Error(L"Failed to reconfigure magnifier after configuration change");
+    }
+}
+
+void App::OnSystemSuspend() {
+    if (!ready_) {
+        return;
+    }
+    resume_should_start_magnifier_ = magnifier_active_;
+    if (magnifier_active_) {
+        StopMagnifier();
+    }
+}
+
+void App::OnSystemResume() {
+    if (!ready_) {
+        return;
+    }
+    bool restart = resume_should_start_magnifier_;
+    resume_should_start_magnifier_ = false;
+    HandleDisplayConfigurationChange(L"Resume from sleep", restart);
 }
 
